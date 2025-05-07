@@ -6,6 +6,7 @@ from datasets import load_dataset
 from datasets import Dataset as HF_Dataset
 from torchvision import transforms
 from torchvision.models import resnet18 as _resnet18
+from torchvision.models.resnet import ResNet18_Weights
 from torch.utils.data import DataLoader, Dataset, ConcatDataset
 from torch.utils.data import random_split, RandomSampler
 from tqdm import tqdm
@@ -95,6 +96,16 @@ class ResNet(nn.Module):
 
         return x
 
+# ResNet-18 instance
+def resnet18(num_classes=2):
+    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes)
+
+def torch_resnet18(num_classes=2):
+    model = _resnet18(weights=ResNet18_Weights.DEFAULT)
+    model.fc = nn.Linear(512, num_classes)
+
+    return model
+
 transform = transforms.Compose([
     transforms.Resize((224, 224)),  # resnet 224x224 
     transforms.ToTensor(),
@@ -111,6 +122,46 @@ class GhibliTorchDataset(Dataset):
     def __getitem__(self, idx):
         img = self.ds[idx]["image"]
         return {"image": self.transform(img), "label": self.ds[idx]["label"]}
+
+ai_augment = transforms.Compose([
+    transforms.RandomResizedCrop(224, scale=(0.8,1.0)),   # 랜덤 크롭 + 리사이즈
+    transforms.RandomHorizontalFlip(),                    # 좌우 뒤집기
+    transforms.RandomRotation(20),                        # ±20도 회전
+    transforms.ColorJitter(brightness=0.3, contrast=0.3,
+                           saturation=0.3, hue=0.1),      # 컬러 변형
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485,0.456,0.406],
+                         std=[0.229,0.224,0.225]),
+])
+
+class AIDataset(Dataset):
+    def __init__(self, img_dir, transform):
+        self.paths = list(Path(img_dir).glob("*.*"))  # jpg/png 파일
+        self.transform = transform
+    def __len__(self):
+        return len(self.paths)
+    def __getitem__(self, idx):
+        img = Image.open(self.paths[idx]).convert("RGB")
+        # 매번 다른 augmentation이 적용됨
+        return {"image": self.transform(img), "label": 0}
+
+def get_dataloaders(ai_dir, batch_size=32, ai_mul=50, split=0.8, num_workers=4):
+    real_hf = load_dataset("Nechintosh/ghibli")["train"].map(lambda x: {"label":1})
+    real_ds = GhibliTorchDataset(real_hf, transform)
+    ai_ds = AIDataset(ai_dir, ai_augment)
+    ai_ds = ConcatDataset([ai_ds] * ai_mul)
+
+    full_ds = ConcatDataset([ai_ds, real_ds])
+
+    train_size = int(split * len(full_ds))
+    test_size = len(full_ds) - train_size
+    train_ds, test_ds = random_split(full_ds, [train_size, test_size])
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size,
+        shuffle=True, num_workers=num_workers)
+    test_loader = DataLoader(test_ds, batch_size=batch_size,
+        shuffle=False, num_workers=num_workers)
+    return train_loader, test_loader
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
@@ -172,16 +223,31 @@ def evaluate(model, loader, criterion, device):
 
     return val_loss / val_total, val_correct / val_total
 
-# ResNet-18 instance
-def resnet18(num_classes=2):
-    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes)
+def train(model, loader: tuple[DataLoader, DataLoader],
+    num_epochs=5, verbose=True
+):
+    train_loader, test_loader = loader
+    train_losses, train_accs, val_losses, val_accs = [], [], [], []
 
-def torch_resnet18(num_classes=2):
-    model = _resnet18(pretrained=True)
-    model.fc = nn.Linear(512, num_classes)
-    return model
+    for epoch in range(1, num_epochs + 1):
+        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        val_loss, val_acc = evaluate(model, test_loader, criterion, device)
 
-def report_train_result(train_losses, train_accs, val_losses, val_accs):
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+        val_losses.append(val_loss)
+        val_accs.append(val_acc)
+
+        if verbose:
+            print(f"[Epoch {epoch}] Train Loss: {train_loss:.4f}, Train Acc: {train_acc*100:.2f}%")
+            print(f"           Val   Loss: {val_loss:.4f}, Val   Acc: {val_acc*100:.2f}%")
+        else:
+            print(f"Epoch {epoch} ends.")
+    
+    return train_losses, train_accs, val_losses, val_accs
+
+def report_train_result(train_result: tuple[list, list, list, list], name: str):
+    train_losses, train_accs, val_losses, val_accs = train_result
     assert len(train_losses) == len(train_accs)
     assert len(val_losses) == len(val_accs)
     assert len(train_losses) == len(val_losses)
@@ -194,8 +260,8 @@ def report_train_result(train_losses, train_accs, val_losses, val_accs):
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.legend()
-    plt.savefig("loss_over_epochs.png")
-    plt.show()
+    plt.savefig(f"{name} loss_over_epochs.png")
+    plt.close()
 
     plt.figure()
     plt.plot(range(1, num_epochs + 1), [a*100 for a in train_accs], label="Train")
@@ -203,83 +269,24 @@ def report_train_result(train_losses, train_accs, val_losses, val_accs):
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy (%)")
     plt.legend()
-    plt.savefig("accuracy_over_epochs.png")
-    plt.show()
-
-ai_augment = transforms.Compose([
-    transforms.RandomResizedCrop(224, scale=(0.8,1.0)),   # 랜덤 크롭 + 리사이즈
-    transforms.RandomHorizontalFlip(),                    # 좌우 뒤집기
-    transforms.RandomRotation(20),                        # ±20도 회전
-    transforms.ColorJitter(brightness=0.3, contrast=0.3,
-                           saturation=0.3, hue=0.1),      # 컬러 변형
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485,0.456,0.406],
-                         std=[0.229,0.224,0.225]),
-])
-
-class AIDataset(Dataset):
-    def __init__(self, img_dir, transform):
-        self.paths = list(Path(img_dir).glob("*.*"))  # jpg/png 파일
-        self.transform = transform
-    def __len__(self):
-        return len(self.paths)
-    def __getitem__(self, idx):
-        img = Image.open(self.paths[idx]).convert("RGB")
-        # 매번 다른 augmentation이 적용됨
-        return {"image": self.transform(img), "label": 0}
+    plt.savefig(f"{name} accuracy_over_epochs.png")
+    plt.close()
 
 if __name__ == "__main__":
-    from torchsummary import summary
-
-    model = resnet18(num_classes=2)
-    # summary(model, (3, 224, 224))
-
-    real_ds = load_dataset("Nechintosh/ghibli")["train"].map(
-        lambda x: {"label": 1}
-    )
-    real_ds = GhibliTorchDataset(real_ds, transform)
-    ai_ds = AIDataset("ai_gen", ai_augment)
-    ai_ds = ConcatDataset([ai_ds] * 50)
-
-    full_ds = ConcatDataset([ai_ds, real_ds])
-
-    train_size = int(0.8 * len(full_ds))
-    test_size = len(full_ds) - train_size
-    train_ds, test_ds = random_split(full_ds, [train_size, test_size])
-
-    sampler = RandomSampler(ai_ds, replacement=True, num_samples=256)
-
-    train_loader = DataLoader(train_ds, batch_size=32, sampler=sampler,
-        num_workers=4)
-    test_loader = DataLoader(test_ds, batch_size=32, sampler=sampler,
-        num_workers=4)
+    import sys
+    model_name = sys.argv[1] if len(sys.argv) > 1 else "resnet18_ghibli"
 
     device = "mps" if torch.backends.mps.is_available() else \
-            "cuda" if torch.cuda.is_available() else "cpu"
+        "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    model = model.to(device)
+    model = torch_resnet18(num_classes=2).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
-    num_epochs = 5
+    loaders = get_dataloaders("ai_gen")
+    train_result = train(model, loaders)
 
-    train_losses, train_accs = [], []
-    val_losses, val_accs = [], []
-
-    for epoch in range(1, num_epochs + 1):
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc = evaluate(model, test_loader, criterion, device)
-
-        train_losses.append(train_loss)
-        train_accs.append(train_acc)
-        val_losses.append(val_loss)
-        val_accs.append(val_acc)
-
-        print(f"[Epoch {epoch}] Train Loss: {train_loss:.4f}, Train Acc: {train_acc*100:.2f}%")
-        print(f"           Val   Loss: {val_loss:.4f}, Val   Acc: {val_acc*100:.2f}%")
-
-    torch.save(model.state_dict(), "resnet18_ghibli.pth")
+    torch.save(model.state_dict(), f"{model_name}.pth")
     print("Model saved!")
-
-    report_train_result(train_losses, train_accs, val_losses, val_accs)
+    report_train_result(train_result, model_name)
