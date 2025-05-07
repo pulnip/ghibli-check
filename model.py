@@ -6,10 +6,12 @@ from datasets import load_dataset
 from datasets import Dataset as HF_Dataset
 from torchvision import transforms
 from torchvision.models import resnet18 as _resnet18
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, ConcatDataset
+from torch.utils.data import random_split, RandomSampler
 from tqdm import tqdm
 from PIL import Image
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 # Basic Residual Block (for ResNet-18, ResNet-34)
 class BasicBlock(nn.Module):
@@ -204,23 +206,53 @@ def report_train_result(train_losses, train_accs, val_losses, val_accs):
     plt.savefig("accuracy_over_epochs.png")
     plt.show()
 
+ai_augment = transforms.Compose([
+    transforms.RandomResizedCrop(224, scale=(0.8,1.0)),   # 랜덤 크롭 + 리사이즈
+    transforms.RandomHorizontalFlip(),                    # 좌우 뒤집기
+    transforms.RandomRotation(20),                        # ±20도 회전
+    transforms.ColorJitter(brightness=0.3, contrast=0.3,
+                           saturation=0.3, hue=0.1),      # 컬러 변형
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485,0.456,0.406],
+                         std=[0.229,0.224,0.225]),
+])
+
+class AIDataset(Dataset):
+    def __init__(self, img_dir, transform):
+        self.paths = list(Path(img_dir).glob("*.*"))  # jpg/png 파일
+        self.transform = transform
+    def __len__(self):
+        return len(self.paths)
+    def __getitem__(self, idx):
+        img = Image.open(self.paths[idx]).convert("RGB")
+        # 매번 다른 augmentation이 적용됨
+        return {"image": self.transform(img), "label": 0}
+
 if __name__ == "__main__":
     from torchsummary import summary
 
     model = resnet18(num_classes=2)
     # summary(model, (3, 224, 224))
 
-    dataset = load_dataset("Nechintosh/ghibli")["train"]
-    def add_label(data):
-        return {"label": 1}
-    dataset = dataset.map(add_label)
-    dataset = dataset.remove_columns("caption")
+    real_ds = load_dataset("Nechintosh/ghibli")["train"].map(
+        lambda x: {"label": 1}
+    )
+    real_ds = GhibliTorchDataset(real_ds, transform)
+    ai_ds = AIDataset("ai_gen", ai_augment)
+    ai_ds = ConcatDataset([ai_ds] * 50)
 
-    dataset = dataset.train_test_split(test_size=0.2)
-    train_loader = DataLoader(
-        GhibliTorchDataset(dataset["train"], transform),
-        batch_size=32, shuffle=True)
-    test_loader = train_loader
+    full_ds = ConcatDataset([ai_ds, real_ds])
+
+    train_size = int(0.8 * len(full_ds))
+    test_size = len(full_ds) - train_size
+    train_ds, test_ds = random_split(full_ds, [train_size, test_size])
+
+    sampler = RandomSampler(ai_ds, replacement=True, num_samples=256)
+
+    train_loader = DataLoader(train_ds, batch_size=32, sampler=sampler,
+        num_workers=4)
+    test_loader = DataLoader(test_ds, batch_size=32, sampler=sampler,
+        num_workers=4)
 
     device = "mps" if torch.backends.mps.is_available() else \
             "cuda" if torch.cuda.is_available() else "cpu"
