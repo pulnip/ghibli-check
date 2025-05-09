@@ -14,6 +14,8 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+from my_util import get_argv
+
 # Basic Residual Block (for ResNet-18, ResNet-34)
 class BasicBlock(nn.Module):
     expansion = 1
@@ -273,8 +275,8 @@ def report_train_result(train_result: tuple[list, list, list, list], name: str):
     plt.close()
 
 if __name__ == "__main__":
-    import sys
-    model_name = sys.argv[1] if len(sys.argv) > 1 else "resnet18_ghibli"
+    ai_gen_dirname = get_argv(1, "on_theme")
+    model_name = get_argv(2, "resnet18_ghibli")
 
     device = "mps" if torch.backends.mps.is_available() else \
         "cuda" if torch.cuda.is_available() else "cpu"
