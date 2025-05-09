@@ -180,14 +180,22 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         labels = batch["label"].to(device)
 
         optimizer.zero_grad()
+        # Using Cross Entropy
         outputs = model(imgs)
         loss = criterion(outputs, labels)
+
+        # Using Binary Cross Entropy
+        # raw_outputs = model(imgs).squeeze(1)
+        # outputs = torch.sigmoid(raw_outputs)
+        # loss = criterion(outputs, labels.float())
+
         loss.backward()
         optimizer.step()
 
         # 통계 업데이트
         running_loss += loss.item() * imgs.size(0)
-        _, preds = outputs.max(1)
+        _, preds = outputs.max(1) # Using Cross Entropy
+        # preds = (outputs > 0.5).long() # Using Binary Cross Entropy
         running_correct += preds.eq(labels).sum().item()
         running_total += imgs.size(0)
 
@@ -213,11 +221,18 @@ def evaluate(model, loader, criterion, device):
             imgs = batch["image"].to(device)
             labels = batch["label"].to(device)
 
+            # Using Cross Entropy
             outputs = model(imgs)
             loss = criterion(outputs, labels)
 
+            # Using Binary Cross Entropy
+            # raw_outputs = model(imgs).squeeze(1)
+            # outputs = torch.sigmoid(raw_outputs)
+            # loss = criterion(outputs, labels.float())
+
             val_loss += loss.item() * imgs.size(0)
-            _, preds = outputs.max(1)
+            _, preds = outputs.max(1) # Using Cross Entropy
+            # preds = (outputs > 0.5).long() # Using Binary Cross Entropy
             val_correct += preds.eq(labels).sum().item()
             val_total += imgs.size(0)
 
@@ -317,9 +332,16 @@ if __name__ == "__main__":
         "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
+    # 1. Using Cross Entropy
     model = resnet18(num_classes=2).to(device)
     # model = torch_resnet18(num_classes=2).to(device)
     criterion = nn.CrossEntropyLoss()
+
+    # 2. Using Binary Cross Entropy
+    # model = resnet18(num_classes=1).to(device)
+    # model = torch_resnet18(num_classes=1).to(device)
+    # criterion = nn.BCELoss()
+
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
     loaders = get_dataloaders(ai_gen_dirname, ai_mul=1)
