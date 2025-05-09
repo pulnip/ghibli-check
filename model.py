@@ -110,7 +110,19 @@ def torch_resnet18(num_classes=2):
     return model
 
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),  # resnet 224x224 
+    # resnet 224x224
+    transforms.RandomResizedCrop((224, 224), scale=(0.8,1.0)),   # 랜덤 크롭 + 리사이즈
+    transforms.RandomHorizontalFlip(),                    # 좌우 뒤집기
+    transforms.RandomRotation(20),                        # ±20도 회전
+    transforms.ColorJitter(brightness=0.3, contrast=0.3,
+                           saturation=0.3, hue=0.1),      # 컬러 변형
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485,0.456,0.406],
+                         std=[0.229,0.224,0.225]),
+])
+
+val_transform = transforms.Compose([
+    transforms.Resize((224,224)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485,0.456,0.406],
                          std=[0.229,0.224,0.225]),
@@ -126,17 +138,6 @@ class GhibliTorchDataset(Dataset):
         img = self.ds[idx]["image"]
         return {"image": self.transform(img), "label": self.ds[idx]["label"]}
 
-ai_augment = transforms.Compose([
-    transforms.RandomResizedCrop(224, scale=(0.8,1.0)),   # 랜덤 크롭 + 리사이즈
-    transforms.RandomHorizontalFlip(),                    # 좌우 뒤집기
-    transforms.RandomRotation(20),                        # ±20도 회전
-    transforms.ColorJitter(brightness=0.3, contrast=0.3,
-                           saturation=0.3, hue=0.1),      # 컬러 변형
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485,0.456,0.406],
-                         std=[0.229,0.224,0.225]),
-])
-
 class AIDataset(Dataset):
     def __init__(self, img_dir, transform):
         self.paths = list(Path(img_dir).glob("*.*"))  # jpg/png 파일
@@ -148,10 +149,10 @@ class AIDataset(Dataset):
         # 매번 다른 augmentation이 적용됨
         return {"image": self.transform(img), "label": 0}
 
-def get_dataloaders(ai_dir, batch_size=32, ai_mul=50, split=0.8, num_workers=4):
+def get_dataloaders(ai_dir, ai_mul=2, batch_size=32, split=0.8, num_workers=4):
     real_hf = load_dataset("Nechintosh/ghibli")["train"].map(lambda x: {"label":1})
     real_ds = GhibliTorchDataset(real_hf, transform)
-    ai_ds = AIDataset(ai_dir, ai_augment)
+    ai_ds = AIDataset(ai_dir, transform)
     ai_ds = ConcatDataset([ai_ds] * ai_mul)
 
     full_ds = ConcatDataset([ai_ds, real_ds])
@@ -316,11 +317,15 @@ if __name__ == "__main__":
         "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    model = torch_resnet18(num_classes=2).to(device)
+    model = resnet18(num_classes=2).to(device)
+    # model = torch_resnet18(num_classes=2).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
-    loaders = get_dataloaders("ai_gen")
+    loaders = get_dataloaders(ai_gen_dirname, ai_mul=1)
+    # visualize_random_batches(loaders[0], num_batches=5)
+    # quit()
+
     train_result = train(model, loaders)
 
     torch.save(model.state_dict(), f"{model_name}.pth")
