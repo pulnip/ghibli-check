@@ -13,6 +13,7 @@ from tqdm import tqdm
 from PIL import Image
 import matplotlib.pyplot as plt
 from pathlib import Path
+import random
 
 from my_util import get_argv
 
@@ -273,6 +274,39 @@ def report_train_result(train_result: tuple[list, list, list, list], name: str):
     plt.legend()
     plt.savefig(f"{name} accuracy_over_epochs.png")
     plt.close()
+
+# Visualize random batches from a loader
+def visualize_random_batches(loader, num_batches=5, samples_per_batch=6):
+    """
+    Display a grid of randomly sampled images from the first num_batches of the loader.
+    Titles indicate true label: 1 -> Real Ghibli, 0 -> AI-generated.
+    """
+    loader_iter = iter(loader)
+    for i in range(num_batches):
+        try:
+            batch = next(loader_iter)
+        except StopIteration:
+            break
+        images = batch["image"]
+        labels = batch["label"]
+        count = min(len(images), samples_per_batch)
+        idxs = random.sample(range(len(images)), k=count)
+        fig, axes = plt.subplots(2, 3, figsize=(9, 6))
+        for j, ax in enumerate(axes.flatten()):
+            if j < count:
+                img = images[idxs[j]].cpu()
+                # Unnormalize
+                mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 1, 3)
+                std = torch.tensor([0.229, 0.224, 0.225]).view(1, 1, 3)
+                img = img.permute(1, 2, 0) * std + mean
+                img = img.clamp(0, 1).numpy()
+                ax.imshow(img)
+                lbl = labels[idxs[j]].item()
+                ax.set_title("Real Ghibli" if lbl == 1 else "AI-generated")
+            ax.axis("off")
+        plt.suptitle(f"Batch {i+1}")
+        plt.tight_layout()
+        plt.show()
 
 if __name__ == "__main__":
     ai_gen_dirname = get_argv(1, "on_theme")
