@@ -2,7 +2,7 @@ import os
 from PIL import Image
 from torchvision import transforms
 import torch
-from my_util import get_argv, get_argvs
+from my_util import get_argv
 from model import resnet18
 
 # Preprocessing pipeline must match training transforms
@@ -67,13 +67,4 @@ if __name__ == "__main__":
     model.load_state_dict(torch.load(model_fname, map_location=device))
     model.eval()
 
-    find_misclassified(model, dir_path, true_label)
-
-    # result = infer(model, image_paths)
-    # for img_path, label in zip(image_paths, result):
-    #     img_fname = img_path.split('/')[-1]
-    #     img_name = img_fname.split('.')[0]
-    #     img_name = img_name if len(img_name) < 20 else f"{img_name[0:17]}..."
-
-    #     desc = "Real Ghibli" if label == 1 else "AI-generated"
-    #     print(f"{img_name[0:]}: {desc}")
+    find_misclassified(model, dir_path, true_label, True)
