@@ -6,7 +6,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from my_util import get_argv
-from model import resnet18, torch_resnet18
+from model import resnet18, torch_resnet18, vit
 from my_data import get_dataloaders, transform
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
@@ -133,15 +133,16 @@ def report_train_result(train_result: tuple[list, list, list, list], name: str):
 
 if __name__ == "__main__":
     ai_gen_dirname = get_argv(1, "on_theme")
-    model_name = get_argv(2, "resnet18_ghibli")
+    model_name = get_argv(2, "vit_ghibli")
 
     device = "mps" if torch.backends.mps.is_available() else \
         "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
     loaders = get_dataloaders(ai_gen_dirname, transform, ai_mul=1)
-    model = (torch_resnet18(num_classes=2) if "torch" in model_name \
-        else resnet18(num_classes=2)).to(device)
+    # model = (torch_resnet18(num_classes=2) if "torch" in model_name \
+    #     else resnet18(num_classes=2)).to(device)
+    model = vit("tiny", num_classes=2).to(device)
     
     # 1. Using Cross Entropy
     criterion = nn.CrossEntropyLoss()
