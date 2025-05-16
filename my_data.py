@@ -38,6 +38,11 @@ class GhibliTorchDataset(Dataset):
         return len(self.ds)
     def __getitem__(self, idx):
         img = self.ds[idx]["image"]
+        # ensure the image is a PIL RGB image
+        if not isinstance(img, Image.Image):
+            img = Image.fromarray(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
         return {"image": self.transform(img), "label": self.ds[idx]["label"]}
 
 class AIDataset(Dataset):
@@ -51,8 +56,19 @@ class AIDataset(Dataset):
         # 매번 다른 augmentation이 적용됨
         return {"image": self.transform(img), "label": 0}
 
+def load_datasets(paths: list[str]):
+    return [
+        load_dataset(
+            path, split="train"
+        ).map(lambda _: {"label": 1})
+        for path in paths
+    ]
+
 def get_dataloaders(ai_dir, transform, ai_mul=2, batch_size=32, split=0.8, num_workers=4):
-    real_hf = load_dataset("Nechintosh/ghibli")["train"].map(lambda x: {"label":1})
+    real_hf = load_datasets(["Nechintosh/ghibli", "satyamtripathii/Ghibli_Anime",
+                             "ItzLoghotXD/Ghibli"])
+    real_hf = ConcatDataset(real_hf)
+
     real_ds = GhibliTorchDataset(real_hf, transform)
     ai_ds = AIDataset(ai_dir, transform)
     ai_ds = ConcatDataset([ai_ds] * ai_mul)
