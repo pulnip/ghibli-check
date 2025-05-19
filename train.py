@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from my_util import get_argv
 from model import resnet18, torch_resnet18, vit
 from my_data import get_dataloaders, transform
+from callbacks import Callback, EarlyStopping
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
     model.train()
@@ -83,14 +84,27 @@ def evaluate(model, loader, criterion, device):
     return val_loss / val_total, val_correct / val_total
 
 def train(model, loader: tuple[DataLoader, DataLoader],
-    num_epochs=5, verbose=True
+    num_epochs=5, callbacks: list[Callback]=[], verbose=True
 ):
     train_loader, test_loader = loader
+    logs = {}
+    for cb in callbacks:
+        cb.on_train_begin(logs)
     train_losses, train_accs, val_losses, val_accs = [], [], [], []
 
     for epoch in range(1, num_epochs + 1):
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
         val_loss, val_acc = evaluate(model, test_loader, criterion, device)
+
+        logs_epoch = {
+            'train_loss': train_loss, 'train_acc': train_acc,
+            'val_loss': val_loss, 'val_acc': val_acc,
+            'model': model
+        }
+        for cb in callbacks:
+            cb.on_epoch_end(epoch, logs_epoch)
+        if logs_epoch.get('stop_training'):
+            break
 
         train_losses.append(train_loss)
         train_accs.append(train_acc)
@@ -102,7 +116,9 @@ def train(model, loader: tuple[DataLoader, DataLoader],
             print(f"           Val   Loss: {val_loss:.4f}, Val   Acc: {val_acc*100:.2f}%")
         else:
             print(f"Epoch {epoch} ends.")
-    
+
+    for cb in callbacks:
+        cb.on_train_end({})
     return train_losses, train_accs, val_losses, val_accs
 
 def report_train_result(train_result: tuple[list, list, list, list], name: str):
@@ -149,8 +165,9 @@ if __name__ == "__main__":
     # 2. Using Binary Cross Entropy
     # criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    train_result = train(model, loaders)
+    early_stop = EarlyStopping(patience=3, restore_best_weights=True)
+    train_result = train(model, loaders, num_epochs=10000, callbacks=[early_stop])
 
     torch.save(model.state_dict(), f"{model_name}.pth")
     print("Model saved!")
-    report_train_result(train_result, model_name)
+    # report_train_result(train_result, model_name)
