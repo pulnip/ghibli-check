@@ -183,6 +183,66 @@ def vit(model_size: Literal["tiny", "small"], num_classes=2):
         mlp_ratio=4.0, dropout=0.1
     )
 
+class ProtoNet(nn.Module):
+    def __init__(self, num_ways: int, num_shots: int,
+                 in_channels = 3):
+        super(ProtoNet, self).__init__()
+        self.in_channels = in_channels
+        self.emb_size = 64
+        self.num_ways = num_ways
+        self.num_support = num_ways * num_shots
+        self.num_query = self.num_support
+
+        self.embedding_net = nn.Sequential(
+            self.convBlock(self.in_channels, self.emb_size, 3),
+            self.convBlock(self.emb_size, self.emb_size, 3),
+            self.convBlock(self.emb_size, self.emb_size, 3),
+            self.convBlock(self.emb_size, self.emb_size, 3),
+            nn.Flatten(start_dim=1),
+            nn.Linear(1024, self.emb_size),
+        )
+
+    @classmethod
+    def convBlock(cls, in_channels: int, out_channels: int,
+                  kernel_size: int) -> nn.Sequential:
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels,
+                      kernel_size, padding=1),
+            nn.BatchNorm2d(out_channels, momentum=1.0,
+                           track_running_stats=False),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+        )
+
+    def get_prototypes(self, embeddings: torch.Tensor,
+                       targets: torch.Tensor) -> torch.Tensor:
+        B, _, D = embeddings.shape
+        prototypes = []
+
+        for way in range(self.num_ways):
+            # extract way class
+            mask = (targets == way).unsqueeze(-1).expand(-1, -1, D)  # (B, N, D)
+            selected = embeddings[mask].view(B, -1, D)  # (B, num_shots, D)
+            proto = selected.mean(dim=1)  # (B, D)
+            prototypes.append(proto.unsqueeze(1))  # (B, 1, D)
+
+        return torch.cat(prototypes, dim=1)  # (B, num_ways, D)
+
+    def forward(self, support_x: torch.Tensor, support_y: torch.Tensor,
+                query: torch.Tensor) -> torch.Tensor:
+        B, N, C, H, W = support_x.shape
+        # Flatten support set to (B*N, C, H, W)
+        support_x_flat = support_x.view(B * N, C, H, W)
+        support_emb = self.embedding_net(support_x_flat).view(B, N, -1)
+        query_emb = self.embedding_net(query).view(B, 1, -1)
+
+        proto_emb = self.get_prototypes(support_emb, support_y)
+        distance = torch.sum(
+            (query_emb.unsqueeze(2)-proto_emb.unsqueeze(1))**2, dim=-1)
+        logits = -distance
+
+        return logits if logits.size(1) != 1 else logits.squeeze(1)
+
 if __name__ == "__main__":
     model_tiny  = vit("tiny", 1000)
     model_small = vit("small", 1000)

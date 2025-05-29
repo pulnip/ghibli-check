@@ -1,4 +1,9 @@
+from torch import cuda
+from torch.backends import mps
 import sys
+
+DEVICE = "cuda" if cuda.is_available() else \
+          "mps" if mps.is_available() else "cpu"
 
 def get_argv(index: int, else_val):
     return sys.argv[index] if len(sys.argv) > index else else_val
