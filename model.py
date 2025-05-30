@@ -3,13 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import resnet18 as _resnet18
 from torchvision.models.resnet import ResNet18_Weights
-from typing import Literal
+from typing import Literal, Type
 
 # Basic Residual Block (for ResNet-18, ResNet-34)
 class ResidualBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+    def __init__(self, in_channels, out_channels,
+                 stride=1, downsample=None):
         super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3,
                                stride=stride, padding=1, bias=False)
@@ -22,7 +23,7 @@ class ResidualBlock(nn.Module):
 
         self.downsample = downsample
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         identity = x
 
         out = self.relu(self.bn1(self.conv1(x)))
@@ -38,10 +39,12 @@ class ResidualBlock(nn.Module):
 
 # ResNet Architecture
 class ResNet(nn.Module):
-    def __init__(self, block, layers, num_classes=1000,
-                 channels = [64, 128, 256, 512]):
-        assert len(layers) == 4 and len(channels) == 4
+    def __init__(self, block: Type[ResidualBlock], layers, num_classes=1000,
+                 channels: list[int]=None):
         super(ResNet, self).__init__()
+        if channels is None:
+            channels = [64, 128, 256, 512]
+        assert len(layers) == 4 and len(channels) == 4
         self.in_channels = channels[0]
 
         self.conv1 = nn.Conv2d(3, channels[0], kernel_size=7,
@@ -58,7 +61,8 @@ class ResNet(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(channels[3] * block.expansion, num_classes)
 
-    def _make_layer(self, block, out_channels, blocks, stride=1):
+    def _make_layer(self, block: Type[ResidualBlock], out_channels,
+                    blocks, stride=1):
         downsample = None
         if stride != 1 or self.in_channels != out_channels * block.expansion:
             downsample = nn.Sequential(
@@ -74,7 +78,7 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         x = self.relu(self.bn1(self.conv1(x)))
         x = self.maxpool(x)
 
@@ -115,7 +119,7 @@ def torch_resnet18(num_classes=2):
 # Basic Patch Embedding and Transformer Encoder Block
 class PatchEmbedding(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
-        super().__init__()
+        super(PatchEmbedding, self).__init__()
         self.patch_size = patch_size
         self.num_patches = (img_size // patch_size) ** 2
         self.proj = nn.Conv2d(in_chans, embed_dim,
@@ -124,7 +128,7 @@ class PatchEmbedding(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, 1 + self.num_patches, embed_dim))
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         B = x.size(0)
         x = self.proj(x)                          # (B, D, H/ps, W/ps)
         x = x.flatten(2).transpose(1, 2)          # (B, N, D)
@@ -135,7 +139,7 @@ class PatchEmbedding(nn.Module):
 
 class TransformerBlock(nn.Module):
     def __init__(self, embed_dim, num_heads, mlp_ratio=4.0, dropout=0.1):
-        super().__init__()
+        super(TransformerBlock, self).__init__()
         self.norm1 = nn.LayerNorm(embed_dim)
         self.attn = nn.MultiheadAttention(embed_dim, num_heads,
                                           dropout=dropout, batch_first=True)
@@ -160,9 +164,9 @@ class TransformerBlock(nn.Module):
 
 # Vision Transformer Architecture
 class VisionTransformer(nn.Module):
-    def __init__(self, img_size, patch_size, in_chans,
-                 num_classes, embed_dim, depth, num_heads, mlp_ratio, dropout):
-        super().__init__()
+    def __init__(self, img_size, patch_size, in_chans, num_classes,
+                 embed_dim, depth, num_heads, mlp_ratio, dropout):
+        super(VisionTransformer, self).__init__()
         self.patch_embed = PatchEmbedding(img_size, patch_size,
                                           in_chans, embed_dim)
         self.blocks = nn.ModuleList([
@@ -172,7 +176,7 @@ class VisionTransformer(nn.Module):
         self.norm = nn.LayerNorm(embed_dim)
         self.head = nn.Linear(embed_dim, num_classes)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         x = self.patch_embed(x)     # (B, 1+N, D)
         for blk in self.blocks:
             x = blk(x)
@@ -198,36 +202,58 @@ def vit(model_size: Literal["tiny", "small"], num_classes=2):
         mlp_ratio=4.0, dropout=0.1
     )
 
+class SimpleBlock(nn.Module):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size=3, padding=1, momentum=1.0):
+        super(SimpleBlock, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels,
+                              kernel_size=kernel_size, padding=padding)
+        self.bn = nn.BatchNorm2d(num_features=out_channels,
+                                 momentum=momentum,
+                                 track_running_stats=False)
+        self.relu = nn.ReLU()
+        self.maxpool = nn.MaxPool2d(2)
+
+    def forward(self, x: torch.Tensor):
+        out = self.relu(self.bn(self.conv(x)))
+        out = self.maxpool(out)
+        return out
+
+class SimpleEmbedding(nn.Module):
+    def __init__(self, block: Type[nn.Module]=SimpleBlock, num_classes=64,
+                 channels: list[int]=None):
+        super(SimpleEmbedding, self).__init__()
+        if channels is None:
+            channels = [3, 64, 64, 64, 64]
+        assert len(channels) == 5
+        self.layer1 = block(in_channels=channels[0],
+                                  out_channels=channels[1])
+        self.layer2 = block(in_channels=channels[1],
+                                  out_channels=channels[2])
+        self.layer3 = block(in_channels=channels[2],
+                                  out_channels=channels[3])
+        self.layer4 = block(in_channels=channels[3],
+                                  out_channels=channels[4])
+        self.fc = nn.Linear(in_features=channels[4]*channels[4],
+                            out_features=num_classes)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.layer4(self.layer3(self.layer2(self.layer1(x))))
+        out = torch.flatten(out, 1)
+        return out
+
 class ProtoNet(nn.Module):
     def __init__(self, num_ways: int, num_shots: int,
-                 in_channels = 3):
+                 embedding_net: Type[nn.Module]=None, in_channels=3):
         super(ProtoNet, self).__init__()
+        if embedding_net is None:
+            embedding_net = SimpleEmbedding(SimpleBlock, num_classes=64)
         self.in_channels = in_channels
         self.emb_size = 64
         self.num_ways = num_ways
         self.num_support = num_ways * num_shots
         self.num_query = self.num_support
 
-        self.embedding_net = nn.Sequential(
-            self.convBlock(self.in_channels, self.emb_size, 3),
-            self.convBlock(self.emb_size, self.emb_size, 3),
-            self.convBlock(self.emb_size, self.emb_size, 3),
-            self.convBlock(self.emb_size, self.emb_size, 3),
-            nn.Flatten(start_dim=1),
-            nn.Linear(1024, self.emb_size),
-        )
-
-    @classmethod
-    def convBlock(cls, in_channels: int, out_channels: int,
-                  kernel_size: int) -> nn.Sequential:
-        return nn.Sequential(
-            nn.Conv2d(in_channels, out_channels,
-                      kernel_size, padding=1),
-            nn.BatchNorm2d(out_channels, momentum=1.0,
-                           track_running_stats=False),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-        )
+        self.embedding_net = embedding_net
 
     def get_prototypes(self, embeddings: torch.Tensor,
                        targets: torch.Tensor) -> torch.Tensor:
