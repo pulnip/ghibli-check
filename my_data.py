@@ -135,7 +135,7 @@ def meta_dataloaders(filename: str, num_episodes=2000,
         lines = f.readlines()
         image_pairs = [json.loads(line) for line in lines]
 
-    full_ds = ProtoEpisodeDataset(image_pairs, transform64, num_episodes)
+    full_ds = ProtoEpisodeDataset(image_pairs, transform, num_episodes)
     train_size = int(split * len(full_ds))
     test_size = len(full_ds) - train_size
     train_ds, test_ds = random_split(full_ds, [train_size, test_size])

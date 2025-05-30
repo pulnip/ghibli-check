@@ -59,10 +59,12 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(block, channels[3], layers[3], stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(channels[3] * block.expansion, num_classes)
+        self.fc = nn.Linear(self.in_channels * block.expansion, num_classes)
 
     def _make_layer(self, block: Type[ResidualBlock], out_channels,
                     blocks, stride=1):
+        if blocks == 0:
+            return nn.Identity()
         downsample = None
         if stride != 1 or self.in_channels != out_channels * block.expansion:
             downsample = nn.Sequential(
@@ -94,8 +96,14 @@ class ResNet(nn.Module):
         return x
 
 # ResNet-18 instance
-def resnet(model_size: Literal[10, 14, 18], num_classes=2):
-    if model_size == 10:
+def resnet(model_size: Literal[6, 8, 10, 14, 18], num_classes=2):
+    if model_size == 6:
+        layers = [1, 1, 0, 0]
+        channels = [32, 64, 128, 256]
+    elif model_size == 8:
+        layers = [1, 1, 1, 0]
+        channels = [32, 64, 128, 256]
+    elif model_size == 10:
         layers = [1, 1, 1, 1]
         channels = [32, 64, 128, 256]
     elif model_size == 14:

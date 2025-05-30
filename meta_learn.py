@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torchinfo import summary
 
 from my_data import meta_dataloaders, visualize_random_episodes
-from model import ProtoNet, SimpleEmbedding
+from model import ProtoNet, resnet, SimpleEmbedding
 from train import meta_one_epoch, train, report_train_result
 from callbacks import EarlyStopping
 from my_util import DEVICE
@@ -15,8 +16,13 @@ if __name__ == '__main__':
                                num_episodes=10000,)
     # visualize_random_episodes(loaders[0].dataset)
 
-    MODEL_NAME = "meta_ghibli"
-    embedding_net = SimpleEmbedding()
+    MODEL_NAME = "meta_ghibli_resnet6"
+
+    embedding_net = resnet(6, 64)
+    info = summary(embedding_net, verbose=0)
+    with open(f"{MODEL_NAME}_summary.txt", "w") as f:
+        f.write(str(info))
+
     model = ProtoNet(num_ways=2, num_shots=3,
                      embedding_net=embedding_net).to(DEVICE)
 
