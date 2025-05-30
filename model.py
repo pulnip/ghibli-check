@@ -6,11 +6,11 @@ from torchvision.models.resnet import ResNet18_Weights
 from typing import Literal
 
 # Basic Residual Block (for ResNet-18, ResNet-34)
-class BasicBlock(nn.Module):
+class ResidualBlock(nn.Module):
     expansion = 1
 
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
-        super(BasicBlock, self).__init__()
+        super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3,
                                stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
@@ -38,23 +38,25 @@ class BasicBlock(nn.Module):
 
 # ResNet Architecture
 class ResNet(nn.Module):
-    def __init__(self, block, layers, num_classes=1000):
+    def __init__(self, block, layers, num_classes=1000,
+                 channels = [64, 128, 256, 512]):
+        assert len(layers) == 4 and len(channels) == 4
         super(ResNet, self).__init__()
-        self.in_channels = 64
+        self.in_channels = channels[0]
 
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
-                               bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
+        self.conv1 = nn.Conv2d(3, channels[0], kernel_size=7,
+                               stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(channels[0])
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-        self.layer1 = self._make_layer(block, 64,  layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.layer1 = self._make_layer(block, channels[0],  layers[0])
+        self.layer2 = self._make_layer(block, channels[1], layers[1], stride=2)
+        self.layer3 = self._make_layer(block, channels[2], layers[2], stride=2)
+        self.layer4 = self._make_layer(block, channels[3], layers[3], stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.fc = nn.Linear(channels[3] * block.expansion, num_classes)
 
     def _make_layer(self, block, out_channels, blocks, stride=1):
         downsample = None
@@ -88,8 +90,21 @@ class ResNet(nn.Module):
         return x
 
 # ResNet-18 instance
-def resnet18(num_classes=2):
-    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes)
+def resnet(model_size: Literal[10, 14, 18], num_classes=2):
+    if model_size == 10:
+        layers = [1, 1, 1, 1]
+        channels = [32, 64, 128, 256]
+    elif model_size == 14:
+        layers = [2, 1, 1, 1]
+        channels = [32, 64, 128, 256]
+    elif model_size == 18:
+        layers = [2, 2, 2, 2]
+        channels = [32, 64, 128, 256]
+    else:
+        raise RuntimeError(f"ResNet-{model_size} not implemented.")
+
+    return ResNet(ResidualBlock, layers=layers,
+                  num_classes=num_classes, channels=channels)
 
 def torch_resnet18(num_classes=2):
     model = _resnet18(weights=ResNet18_Weights.DEFAULT)
