@@ -1,17 +1,12 @@
 import os
-from PIL import Image
-from torchvision import transforms
+import PIL.Image as Image
+from PIL.Image import Image as PIL_Image
 import torch
-from my_util import get_argv
-from model import resnet18
-
-# Preprocessing pipeline must match training transforms
-preprocess = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225]),
-])
+import torch.nn as nn
+from pathlib import Path
+from my_util import DEVICE
+from my_data import val_transform as preprocess
+from model import ProtoNet
 
 def infer(model, image_paths: list[str]):
     infer_result = []
@@ -19,16 +14,16 @@ def infer(model, image_paths: list[str]):
     # Inference on each image
     for img_path in image_paths:
         img = Image.open(img_path).convert("RGB")
-        input_tensor = preprocess(img).unsqueeze(0).to(device)
+        input_tensor = preprocess(img).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
             output = model(input_tensor)
             pred = output.argmax(dim=1).item()
         infer_result.append(pred)
     return infer_result
 
-
 # Function to find misclassified images in a folder
-def find_misclassified(model, folder_path: str, true_label: int, verbose=False):
+def find_misclassified(model: nn.Module, folder_path: str,
+                       true_label: int, verbose=False):
     """
     Given a folder of images and the true label (1 for real Ghibli, 0 for AI-generated),
     print out any images that the model misclassifies.

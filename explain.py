@@ -2,11 +2,10 @@ import matplotlib.pyplot as plt
 import torch
 
 from my_util import get_argv
-from model import resnet18
+from model import resnet
 
 def load_model(model_fname: str):
-    # pretrained 아니고 너가 학습한 모델 불러오기
-    model = resnet18(num_classes=2)
+    model = resnet(18, num_classes=2)
     model.load_state_dict(torch.load(model_fname))
 
     return model

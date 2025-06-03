@@ -18,7 +18,7 @@ if __name__ == '__main__':
 
     MODEL_NAME = "meta_ghibli_resnet6"
 
-    embedding_net = resnet(6, 64)
+    embedding_net = resnet(6, 64).to(DEVICE)
     info = summary(embedding_net, verbose=0)
     with open(f"{MODEL_NAME}_summary.txt", "w") as f:
         f.write(str(info))
