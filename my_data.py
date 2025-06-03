@@ -5,6 +5,7 @@ from torch.utils.data import random_split
 from torchvision import transforms
 import torchvision.transforms.functional as F
 from PIL import Image
+from PIL.Image import Image as PIL_Image
 from pathlib import Path
 import matplotlib.pyplot as plt
 import random
@@ -62,44 +63,42 @@ class AIDataset(Dataset):
         # 매번 다른 augmentation이 적용됨
         return {"image": self.transform(img), "label": 0}
 
-class ProtoEpisodeDataset(Dataset):
-    def __init__(self, image_pairs, transform,
-                 num_episodes=2000, K=3):
-        self.transform = transform
-        self.image_pairs = image_pairs
+# support_x, support_y, query, label
+Episode = tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]
 
-        pair_indexes = list(range(len(image_pairs)))
-        self.support_indexes = set()
-        while len(self.support_indexes) < num_episodes:
+class ProtoEpisodeDataset(Dataset):
+    def __init__(self, image_pair_paths, transform,
+                 num_episodes=2000, K=3):
+        self.episodes: list[Episode] = []
+
+        pair_indexes = list(range(len(image_pair_paths)))
+        support_indexes = set()
+        while len(support_indexes) < num_episodes:
             # Ensure tuple for set (hashable)
-            self.support_indexes.add(tuple(random.sample(pair_indexes, K)))
-        half = num_episodes // 2
-        self.query_labels = [0]*half + [1]*(num_episodes - half)
-        random.shuffle(self.query_labels)
+            support_indexes.add(tuple(random.sample(pair_indexes, K)))
+
+        for support_index in support_indexes:
+            support_ai   = [transform(Image.open(image_pair_paths[i]["ai_image"]).convert("RGB"))
+                            for i in support_index]
+            support_real = [transform(Image.open(image_pair_paths[i]["real_image"]).convert("RGB"))
+                            for i in support_index]
+            support_x = torch.stack(support_ai+support_real)
+            support_y = torch.tensor([0]*K + [1]*K)
+
+            remaining_indexes = list(set(pair_indexes) - set(support_index))
+            query_index = random.choice(remaining_indexes)
+            label = random.randint(0, 1)
+            key = "ai_image" if label == 0 else "real_image"
+
+            query = val_transform(Image.open(image_pair_paths[query_index][key]).convert("RGB")).unsqueeze(0)
+
+            self.episodes.append((support_x, support_y, query, label))
 
     def __len__(self):
-        return len(self.support_indexes)
+        return len(self.episodes)
 
     def __getitem__(self, idx):
-        # Convert set to list for indexing, and tuple to list for usage
-        support_index = list(self.support_indexes)[idx]
-
-        # support
-        real = [self.transform(Image.open(self.image_pairs[i]["real_image"]).convert("RGB")) for i in support_index]
-        ai = [self.transform(Image.open(self.image_pairs[i]["ai_image"]).convert("RGB")) for i in support_index]
-        support_x = torch.stack(ai + real)
-        support_y = torch.tensor([0]*len(ai)+[1]*len(real))
-
-        # query
-        all_indexes = list(range(len(self.image_pairs)))
-        remaining_indexes = list(set(all_indexes) - set(support_index))
-
-        query_idx = random.choice(remaining_indexes)
-        label = self.query_labels[idx]
-        query_path = self.image_pairs[query_idx]["real_image"] if label == 1 else self.image_pairs[query_idx]["ai_image"]
-        query = self.transform(Image.open(query_path).convert("RGB"))
-
-        return support_x, support_y, query, label
+        return self.episodes[idx]
 
 def load_datasets(paths: list[str]):
     return [
