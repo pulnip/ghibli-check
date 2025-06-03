@@ -279,15 +279,27 @@ class ProtoNet(nn.Module):
 
     def forward(self, support_x: torch.Tensor, support_y: torch.Tensor,
                 query: torch.Tensor) -> torch.Tensor:
+        if support_x.ndim == 4:
+            support_x = support_x.unsqueeze(0)      # (1, N, C, H, W)
+        if support_y.ndim == 1:
+            support_y = support_y.unsqueeze(0)      # (1, N)
+        if query.ndim == 3:
+            query = query.unsqueeze(0).unsqueeze(0) # (1, 1, C, H, W)
+        elif query.ndim == 4:
+            query = query.unsqueeze(0)              # (1, M, C, H, W)
         B, N, C, H, W = support_x.shape
+        _, M, _, _, _ = query.shape
         # Flatten support set to (B*N, C, H, W)
-        support_x_flat = support_x.view(B * N, C, H, W)
+        support_x_flat = support_x.view(B*N, C, H, W)
         support_emb = self.embedding_net(support_x_flat).view(B, N, -1)
-        query_emb = self.embedding_net(query).view(B, 1, -1)
+        # Flatten queries to (B*M, C, H, W)
+        query_flat = query.view(B * M, C, H, W)
+        query_emb = self.embedding_net(query_flat).view(B, M, -1)
 
         proto_emb = self.get_prototypes(support_emb, support_y)
         distance = torch.sum(
             (query_emb.unsqueeze(2)-proto_emb.unsqueeze(1))**2, dim=-1)
+        distance = distance if B != 1 else distance.squeeze(0)
         logits = -distance
 
         return logits if logits.size(1) != 1 else logits.squeeze(1)

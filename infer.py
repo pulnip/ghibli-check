@@ -47,19 +47,36 @@ def find_misclassified(model: nn.Module, folder_path: str,
                 print(f"{img_name}")
     print(f"잘못 분류된 이미지 개수: {mis_count}")
 
-if __name__ == "__main__":
-    model_fname = get_argv(1, "resnet18_ghibli.pth")
-    # image_paths = get_argvs(2)
-    dir_path = get_argv(2, "on_theme")
-    true_label = int(get_argv(3, 0))
+def proto_infer(model: ProtoNet, task_paths: list[str]):
+    infer_result: dict[str, dict[str, int]] = {}
 
-    # Load model
-    device = "mps" if torch.backends.mps.is_available() else \
-        "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
+    for task in task_paths:
+        support: dict[int, list[torch.Tensor]] = {}
+        queries: dict[str, torch.Tensor] = []
 
-    model = resnet18(num_classes=2).to(device)
-    model.load_state_dict(torch.load(model_fname, map_location=device))
-    model.eval()
+        for class_folder in Path(task).iterdir():
+            images: dict[str, torch.Tensor] = {img_path.name: preprocess(Image.open(img_path))
+                                               for img_path in list(class_folder.glob("*.*"))}
 
-    find_misclassified(model, dir_path, true_label, True)
+            if(class_folder.is_dir()):
+                if(class_folder.name != "query"):
+                    class_name = int(class_folder.name)
+                    support[class_name] = list(images.values())
+                else:
+                    queries = images
+
+        support_x: list[torch.Tensor] = []
+        support_y: list[int] = []
+        for cls, imgs in support.items():
+            support_x += imgs
+            support_y += [cls]*len(imgs)
+        support_x = torch.stack(support_x).to(DEVICE)
+        support_y = torch.tensor(support_y).to(DEVICE)
+
+        query_x = torch.stack(list(queries.values())).to(DEVICE)
+        query_y: torch.Tensor = model(support_x, support_y, query_x)
+        preds = query_y.argmax(dim=1)
+
+        task_result = {name: int(label.item()) for name, label in zip(queries.keys(), preds)}
+        infer_result[task] = task_result
+    return infer_result
