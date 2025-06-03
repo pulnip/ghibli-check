@@ -55,7 +55,7 @@ def proto_infer(model: ProtoNet, task_paths: list[str]):
         queries: dict[str, torch.Tensor] = []
 
         for class_folder in Path(task).iterdir():
-            images: dict[str, torch.Tensor] = {img_path.name: preprocess(Image.open(img_path))
+            images: dict[str, torch.Tensor] = {img_path.name: preprocess(Image.open(img_path).convert("RGB"))
                                                for img_path in list(class_folder.glob("*.*"))}
 
             if(class_folder.is_dir()):
