@@ -3,6 +3,7 @@ from argparse import ArgumentParser
 from my_util import DEVICE, get_argv
 from model import ProtoNet, resnet
 from infer import proto_infer
+import re
 
 def shorten(text: str, maxlen=12, num_dot=3):
     return text if len(text) <= maxlen \
@@ -19,8 +20,9 @@ if __name__ == "__main__":
     model_fname: str = f"{args.model}.pth"
     task_paths: list[str] = args.task
 
-    # Hard-coded embedding
-    embedding = resnet(6, num_classes=64)
+    match = re.search(r"resnet(\d+)", args.model)
+    model_size = int(match.group(1)) if match else 6
+    embedding = resnet(model_size, num_classes=64)
 
     # Load model
     model = ProtoNet(num_ways=2, num_shots=3,
