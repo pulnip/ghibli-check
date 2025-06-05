@@ -15,7 +15,8 @@ def classifier_one_epoch(model, loader, criterion, optimizer, device):
     running_total = 0
 
     # progress bar
-    pbar = tqdm(loader, desc="Train", leave=False)
+    desc = "Train" if optimizer is not None else "Eval "
+    pbar = tqdm(loader, desc=desc, leave=False)
     for batch in pbar:
         imgs = batch["image"].to(device)
         labels = batch["label"].to(device)

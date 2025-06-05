@@ -1,19 +1,20 @@
 from datasets import load_dataset
+from datasets import Dataset as HF_Dataset
 import torch
-from torch.utils.data import DataLoader, Dataset, ConcatDataset
-from torch.utils.data import random_split
+from torch.utils.data import DataLoader, Dataset, random_split
 from torchvision import transforms
 import torchvision.transforms.functional as F
 from PIL import Image
 from PIL.Image import Image as PIL_Image
-from pathlib import Path
 import matplotlib.pyplot as plt
 import random
 import json
+from collections import Counter
+import numpy as np
+from typing import Any
+from tqdm import tqdm
 
-from my_util import get_argv
-
-transform = transforms.Compose([
+train_transform = transforms.Compose([
     # resnet 224x224
     transforms.RandomResizedCrop((224, 224), scale=(0.8,1.0)),   # 랜덤 크롭 + 리사이즈
     transforms.RandomHorizontalFlip(),                    # 좌우 뒤집기
@@ -32,36 +33,52 @@ val_transform = transforms.Compose([
                          std=[0.229,0.224,0.225]),
 ])
 
-transform64 = transforms.Compose([
-    transforms.RandomResizedCrop((64, 64), scale=(0.8,1.0)),   # 랜덤 크롭 + 리사이즈
-    transforms.ToTensor(),
-])
-
 class GhibliTorchDataset(Dataset):
-    def __init__(self, hf_ds, transform):
-        self.ds = hf_ds
-        self.transform = transform
-    def __len__(self):
-        return len(self.ds)
-    def __getitem__(self, idx):
-        img = self.ds[idx]["image"]
-        # ensure the image is a PIL RGB image
-        if not isinstance(img, Image.Image):
-            img = Image.fromarray(img)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        return {"image": self.transform(img), "label": self.ds[idx]["label"]}
+    def __init__(self, ds: HF_Dataset, num_data: int,
+                 train=True, pbar: tqdm = None):
+        super(Dataset, self).__init__()
+        self.samples: list[dict[str, Any]] = []
 
-class AIDataset(Dataset):
-    def __init__(self, img_dir, transform):
-        self.paths = list(Path(img_dir).glob("*.*"))  # jpg/png 파일
-        self.transform = transform
+        class_counts: dict[int, int] = dict(Counter(ds["label"]))
+        per_class = num_data // len(class_counts)
+
+        aug_info: dict[int, list[int]] = {}
+        for cls, count in class_counts.items():
+            remaining_indexes = random.sample(range(count), per_class%count)
+            inhomogeneity = [1 if i in remaining_indexes else 0 for i in range(count)]
+            # for class balanced uniform sampling
+            homogeneity = [per_class // count] * count
+            aug_info[cls] =  np.add(homogeneity, inhomogeneity)
+
+            class_counts: dict[int, int] = dict(Counter(ds["label"]))
+
+        def ensure_pil_rgb(img):
+            if not isinstance(img, PIL_Image):
+                img = Image.fromarray(img, mode="RGB")
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            return img
+
+        is_shared_pbar = pbar is not None
+        pbar = pbar if is_shared_pbar \
+                    else tqdm(total=num_data,
+                              desc=f"Augmenting {"Train" if train else "Validate"} samples")
+        transform = train_transform if train else val_transform
+        for cls, aug_counts in aug_info.items():
+            cls_indexes = [i for i, lbl in enumerate(ds["label"]) if lbl == cls]
+            for i, num_aug in zip(cls_indexes, aug_counts):
+                for j in range(num_aug):
+                    img = ensure_pil_rgb(ds[i]["image"])
+                    self.samples.append({"label": cls,
+                                         "image": transform(img),})
+                    pbar.update(1)
+        if not is_shared_pbar:
+            pbar.close()
+
     def __len__(self):
-        return len(self.paths)
-    def __getitem__(self, idx):
-        img = Image.open(self.paths[idx]).convert("RGB")
-        # 매번 다른 augmentation이 적용됨
-        return {"image": self.transform(img), "label": 0}
+        return len(self.samples)
+    def __getitem__(self, index):
+        return self.samples[index]
 
 # support_x, support_y, query, label
 Episode = tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]
@@ -69,6 +86,7 @@ Episode = tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]
 class ProtoEpisodeDataset(Dataset):
     def __init__(self, image_pair_paths, transform,
                  num_episodes=2000, K=3):
+        super(ProtoEpisodeDataset, self).__init__()
         self.episodes: list[Episode] = []
 
         pair_indexes = list(range(len(image_pair_paths)))
@@ -97,36 +115,31 @@ class ProtoEpisodeDataset(Dataset):
     def __len__(self):
         return len(self.episodes)
 
-    def __getitem__(self, idx):
-        return self.episodes[idx]
+    def __getitem__(self, index):
+        return self.episodes[index]
 
-def load_datasets(paths: list[str]):
-    return [
-        load_dataset(
-            path, split="train"
-        ).map(lambda _: {"label": 1})
-        for path in paths
-    ]
+def get_dataloaders(num_data=4000, split=0.8,
+                    batch_size=32, num_workers=4):
+    ds = load_dataset("pulnip/ghibli-dataset", split="train")
+    ds = ds.map(lambda batch: {"label": [1 if label=="real" else 0
+                                         for label in batch["label"]],},
+                remove_columns = [col for col in ds.column_names 
+                                 if col not in ["image", "label"]],
+                batched=True)
 
-def get_dataloaders(ai_dir, transform, ai_mul=2, batch_size=32, split=0.8, num_workers=4):
-    real_hf = load_datasets(["pulnip/ghibli-dataset"])
-    real_hf = ConcatDataset(real_hf)
-
-    real_ds = GhibliTorchDataset(real_hf, transform)
-    ai_ds = AIDataset(ai_dir, transform)
-    ai_ds = ConcatDataset([ai_ds] * ai_mul)
-
-    full_ds = ConcatDataset([ai_ds, real_ds])
-
-    train_size = int(split * len(full_ds))
-    test_size = len(full_ds) - train_size
-    train_ds, test_ds = random_split(full_ds, [train_size, test_size])
+    pbar = tqdm(total=num_data, desc="Augmenting samples")
+    train_size = int(split * num_data)
+    val_size   = num_data - train_size
+    train_ds = GhibliTorchDataset(ds=ds, num_data=train_size,
+                                  train=True, pbar=pbar)
+    val_ds   = GhibliTorchDataset(ds=ds, num_data=val_size,
+                                  train=True, pbar=pbar)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size,
         shuffle=True, num_workers=num_workers)
-    test_loader = DataLoader(test_ds, batch_size=batch_size,
+    val_loader = DataLoader(val_ds, batch_size=batch_size,
         shuffle=False, num_workers=num_workers)
-    return train_loader, test_loader
+    return train_loader, val_loader
 
 def meta_dataloaders(filename: str, num_episodes=2000,
                      batch_size=32, split=0.8, num_workers=4):
@@ -134,7 +147,7 @@ def meta_dataloaders(filename: str, num_episodes=2000,
         lines = f.readlines()
         image_pairs = [json.loads(line) for line in lines]
 
-    full_ds = ProtoEpisodeDataset(image_pairs, transform, num_episodes)
+    full_ds = ProtoEpisodeDataset(image_pairs, train_transform, num_episodes)
     train_size = int(split * len(full_ds))
     test_size = len(full_ds) - train_size
     train_ds, test_ds = random_split(full_ds, [train_size, test_size])
