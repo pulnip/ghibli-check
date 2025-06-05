@@ -1,14 +1,9 @@
 import matplotlib.pyplot as plt
 import torch
+from argparse import ArgumentParser
+import re
 
-from my_util import get_argv
-from model import resnet
-
-def load_model(model_fname: str):
-    model = resnet(18, num_classes=2)
-    model.load_state_dict(torch.load(model_fname))
-
-    return model
+from model import resnet, vit
 
 def visualize_conv1_filters(weights, n_col=8):
     """
@@ -30,9 +25,27 @@ def visualize_conv1_filters(weights, n_col=8):
     plt.show()
 
 if __name__ == "__main__":
-    model_fname = get_argv(1, "resnet18_ghibli.pth")
+    parser = ArgumentParser(description="Model Explainability")
+    parser.add_argument("--model", type=str, help="Model Name",
+                        default="resnet18_ghibli")
+    args = parser.parse_args()
 
-    model = load_model(model_fname).eval()
+    MODEL_NAME: str = args.model
+
+    if "resnet" in MODEL_NAME:
+        match = re.search(r"resnet(\d+)", MODEL_NAME)
+        MODEL_SIZE = int(match.group(1)) if match else 18
+        model = resnet(MODEL_SIZE, num_classes=2)
+    elif "vit" in MODEL_NAME:
+        match = re.search(r"vit-(\w+)_", MODEL_NAME)
+        MODEL_SIZE = str(match.group(1)) if match else "tiny"
+        model = vit(MODEL_SIZE, num_classes=2)
+        raise RuntimeError(f"f{MODEL_NAME} not available.")
+    else:
+        raise RuntimeError(f"f{MODEL_NAME} not implemented.")
+
+    model.load_state_dict(torch.load(f"{MODEL_NAME}.pth"))
+    model.eval()
 
     conv1_weights = model.conv1.weight.data.clone().cpu()
     visualize_conv1_filters(conv1_weights)

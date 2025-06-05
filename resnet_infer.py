@@ -1,13 +1,22 @@
 import torch
-from my_util import DEVICE, get_argv
+from argparse import ArgumentParser
+from my_util import DEVICE
 from model import resnet
 from infer import find_misclassified
 
 if __name__ == "__main__":
-    model_fname = get_argv(1, "resnet18_ghibli.pth")
-    # image_paths = get_argvs(2)
-    dir_path = get_argv(2, "on_theme")
-    true_label = int(get_argv(3, 0))
+    parser = ArgumentParser(description="ResNet inference")
+    parser.add_argument("--model", type=str, help="Model Name",
+                        default="resnet18_ghibli")
+    parser.add_argument("--test", type=str, help="Test Folder Name",
+                        default="on_theme")
+    parser.add_argument("--label", type=int, help="True Label",
+                        default="on_theme")
+    args = parser.parse_args()
+
+    model_fname = f"{args.model}.pth"
+    dir_path: str = args.test
+    true_label: int = args.label
 
     # Load model
     model = resnet(18, num_classes=2).to(DEVICE)

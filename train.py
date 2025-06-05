@@ -1,11 +1,18 @@
 import torch
+import torch.nn as nn
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from typing import Optional, Callable
 
 from callbacks import Callback
 
-def classifier_one_epoch(model, loader, criterion, optimizer, device):
+def classifier_one_epoch(model: nn.Module, loader: DataLoader,
+                         criterion: nn.Module,
+                         optimizer: Optional[Optimizer],
+                         device: str):
     if optimizer is not None:
         model.train()
     else:
@@ -54,7 +61,9 @@ def classifier_one_epoch(model, loader, criterion, optimizer, device):
     epoch_acc  = running_correct / running_total
     return epoch_loss, epoch_acc
 
-def meta_one_epoch(model, loader, criterion, optimizer, device):
+def meta_one_epoch(model: nn.Module, loader: DataLoader,
+                   criterion: nn.Module, optimizer: Optional[Optimizer],
+                   device: str):
     if optimizer is not None:
         model.train()
     else:
@@ -97,10 +106,11 @@ def meta_one_epoch(model, loader, criterion, optimizer, device):
     epoch_acc  = running_correct / running_total
     return epoch_loss, epoch_acc
 
-def train(model, loader: tuple[DataLoader, DataLoader],
-    criterion, optimizer, one_epoch_fn, device: str,
+def train(model: nn.Module, loader: tuple[DataLoader, DataLoader],
+    criterion: nn.Module, optimizer: Optimizer,
+    one_epoch_fn: Callable, device: str,
     num_epochs=5, callbacks: list[Callback]=[],
-    scheduler=None, verbose=True
+    scheduler: Optional[LRScheduler]=None, verbose=True
 ):
     train_loader, test_loader = loader
     logs = {}
@@ -154,6 +164,7 @@ def report_train_result(train_result: tuple[list, list, list, list], name: str):
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.legend()
+    plt.grid(True)
     plt.savefig(f"{name} loss_over_epochs.png")
     plt.close()
 
@@ -163,5 +174,6 @@ def report_train_result(train_result: tuple[list, list, list, list], name: str):
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy (%)")
     plt.legend()
+    plt.grid(True)
     plt.savefig(f"{name} accuracy_over_epochs.png")
     plt.close()

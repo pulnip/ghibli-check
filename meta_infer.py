@@ -1,6 +1,6 @@
 import torch
 from argparse import ArgumentParser
-from my_util import DEVICE, get_argv
+from my_util import DEVICE
 from model import ProtoNet, resnet
 from infer import proto_infer
 import re
