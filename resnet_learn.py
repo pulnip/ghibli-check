@@ -1,36 +1,45 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torchinfo import summary
+from argparse import ArgumentParser
+import re
 
-from my_data import get_dataloaders, visualize_random_batches, transform, val_transform
-from model import torch_resnet18, resnet
+from my_data import get_dataloaders, visualize_random_batches
+from model import resnet
 from train import classifier_one_epoch, train, report_train_result
 from callbacks import EarlyStopping
-from my_util import DEVICE, get_argv
+from my_util import DEVICE
 
 if __name__ == '__main__':
     print(f"Using device: {DEVICE}")
 
-    ai_gen_dirname = get_argv(1, "on_theme")
-    model_name = get_argv(2, "resnet_ghibli")
+    parser = ArgumentParser(description="ResNet training")
+    parser.add_argument("--model", type=str, help="Model Name",
+                        default="resnet18_ghibli")
+    args = parser.parse_args()
 
-    loaders = get_dataloaders(ai_gen_dirname, transform, ai_mul=1)
+    MODEL_NAME: str = args.model
+    match = re.search(r"resnet(\d+)", MODEL_NAME)
+    MODEL_SIZE = int(match.group(1)) if match else 18
 
-    # train_loader, _ = get_dataloaders(ai_gen_dirname, val_transform, ai_mul=1)
-    # visualize_random_batches(train_loader, num_batches=5)
+    loaders = get_dataloaders()
+    # visualize_random_batches(loaders[0], num_batches=5)
 
-    model = (torch_resnet18(num_classes=2) if "torch" in model_name \
-        else resnet(18, num_classes=2)).to(DEVICE)
+    model = resnet(MODEL_SIZE, num_classes=2).to(DEVICE)
+    model_info = summary(model, verbose=0)
+    with open(f"{MODEL_NAME}_summary.txt", "w") as f:
+        f.write(str(model_info))
     # 1. Using Cross Entropy
     criterion = nn.CrossEntropyLoss()
     # 2. Using Binary Cross Entropy
     # criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    es = EarlyStopping(patience=3, restore_best_weights=True)
+    es = EarlyStopping(patience=5, restore_best_weights=True)
     result = train(model, loaders, criterion, optimizer,        
                    classifier_one_epoch, DEVICE,
                    num_epochs=10000, callbacks=[es])
 
-    torch.save(model.state_dict(), f"{model_name}.pth")
+    torch.save(model.state_dict(), f"{MODEL_NAME}.pth")
     print("Model saved!")
-    report_train_result(result, model_name)
+    report_train_result(result, MODEL_NAME)
