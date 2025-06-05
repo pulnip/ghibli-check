@@ -199,20 +199,30 @@ class VisionTransformer(nn.Module):
         return self.head(cls)
 
 # ViT instance
-def vit(model_size: Literal["tiny", "small"], num_classes=2):
+def vit(model_size: Literal["tiny", "small", "base", "large"], num_classes=2):
     if model_size == "tiny":
         embed_dim = 192
         num_heads = 3
+        depth = 12
     elif model_size == "small":
         embed_dim = 384
         num_heads = 6
+        depth = 12
+    elif model_size == "base":
+        embed_dim = 768
+        num_heads = 12
+        depth = 12
+    elif model_size == "large":
+        embed_dim = 1024
+        num_heads = 16
+        depth = 24
     else:
         raise RuntimeError(f"ViT-{model_size} not implemented.")
 
     return VisionTransformer(
         img_size=224, patch_size=16, in_chans=3,
         num_classes=num_classes,
-        embed_dim=embed_dim, depth=12, num_heads=num_heads,
+        embed_dim=embed_dim, depth=depth, num_heads=num_heads,
         mlp_ratio=4.0, dropout=0.1
     )
 
