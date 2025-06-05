@@ -98,9 +98,9 @@ def meta_one_epoch(model, loader, criterion, optimizer, device):
     return epoch_loss, epoch_acc
 
 def train(model, loader: tuple[DataLoader, DataLoader],
-    criterion, optimizer,
-    one_epoch_fn, device: str, num_epochs=5,
-    callbacks: list[Callback]=[], verbose=True
+    criterion, optimizer, one_epoch_fn, device: str,
+    num_epochs=5, callbacks: list[Callback]=[],
+    scheduler=None, verbose=True
 ):
     train_loader, test_loader = loader
     logs = {}
@@ -111,6 +111,9 @@ def train(model, loader: tuple[DataLoader, DataLoader],
     for epoch in range(1, num_epochs + 1):
         train_loss, train_acc = one_epoch_fn(model, train_loader, criterion, optimizer, device)
         val_loss, val_acc = one_epoch_fn(model, test_loader, criterion, None, device)
+
+        if scheduler is not None:
+            scheduler.step()
 
         logs_epoch = {
             'train_loss': train_loss, 'train_acc': train_acc,

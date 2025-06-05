@@ -95,33 +95,39 @@ class ResNet(nn.Module):
 
         return x
 
-# ResNet-18 instance
+# ResNet instance
 def resnet(model_size: Literal[6, 8, 10, 14, 18], num_classes=2):
     if model_size == 6:
         layers = [1, 1, 0, 0]
-        channels = [32, 64, 128, 256]
+        channels = [64, 128, 256, 512]
     elif model_size == 8:
         layers = [1, 1, 1, 0]
-        channels = [32, 64, 128, 256]
+        channels = [64, 128, 256, 512]
     elif model_size == 10:
         layers = [1, 1, 1, 1]
-        channels = [32, 64, 128, 256]
+        channels = [64, 128, 256, 512]
     elif model_size == 14:
         layers = [2, 1, 1, 1]
-        channels = [32, 64, 128, 256]
+        channels = [64, 128, 256, 512]
     elif model_size == 18:
         layers = [2, 2, 2, 2]
-        channels = [32, 64, 128, 256]
+        channels = [64, 128, 256, 512]
+    elif model_size == 34:
+        layers = [3, 4, 6, 3]
+        channels = [64, 128, 256, 512]
     else:
         raise RuntimeError(f"ResNet-{model_size} not implemented.")
 
     return ResNet(ResidualBlock, layers=layers,
                   num_classes=num_classes, channels=channels)
 
-def torch_resnet18(num_classes=2):
-    model = _resnet18(weights=ResNet18_Weights.DEFAULT)
-    model.fc = nn.Linear(512, num_classes)
+def pretrained_resnet(model_size: Literal[6, 8, 10, 14, 18], num_classes=2):
+    if model_size == 18:
+        model = _resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+    else:
+        raise RuntimeError(f"ResNet-{model_size} not provided.")
 
+    model.fc = nn.Linear(512, num_classes)
     return model
 
 # Basic Patch Embedding and Transformer Encoder Block
