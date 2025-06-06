@@ -97,29 +97,22 @@ class ResNet(nn.Module):
 
 # ResNet instance
 def resnet(model_size: Literal[6, 8, 10, 14, 18], num_classes=2):
-    if model_size == 6:
-        layers = [1, 1, 0, 0]
-        channels = [64, 128, 256, 512]
-    elif model_size == 8:
-        layers = [1, 1, 1, 0]
-        channels = [64, 128, 256, 512]
-    elif model_size == 10:
-        layers = [1, 1, 1, 1]
-        channels = [64, 128, 256, 512]
-    elif model_size == 14:
-        layers = [2, 1, 1, 1]
-        channels = [64, 128, 256, 512]
-    elif model_size == 18:
-        layers = [2, 2, 2, 2]
-        channels = [64, 128, 256, 512]
-    elif model_size == 34:
-        layers = [3, 4, 6, 3]
-        channels = [64, 128, 256, 512]
-    else:
-        raise RuntimeError(f"ResNet-{model_size} not implemented.")
+    RESNET_CONFIGS = {
+        6:  {"layers": [1, 1, 0, 0]},
+        8:  {"layers": [1, 1, 1, 0]},
+        10: {"layers": [1, 1, 1, 1]},
+        14: {"layers": [2, 1, 1, 1]},
+        18: {"layers": [2, 2, 2, 2]},
+        34: {"layers": [3, 4, 6, 3]},
+    }
+    CHANNELS = [64, 128, 256, 512]
 
-    return ResNet(ResidualBlock, layers=layers,
-                  num_classes=num_classes, channels=channels)
+    if model_size not in RESNET_CONFIGS:
+        raise RuntimeError(f"ResNet-{model_size} not implemented.")
+    config = RESNET_CONFIGS[model_size]
+
+    return ResNet(ResidualBlock, layers=config["layers"],
+                  num_classes=num_classes, channels=CHANNELS)
 
 def pretrained_resnet(model_size: Literal[6, 8, 10, 14, 18], num_classes=2):
     if model_size == 18:
@@ -129,6 +122,116 @@ def pretrained_resnet(model_size: Literal[6, 8, 10, 14, 18], num_classes=2):
 
     model.fc = nn.Linear(512, num_classes)
     return model
+
+# Squeeze and Excitation Block (for EfficientNet)
+class SqueezeExcitation(nn.Module):
+    def __init__(self, in_channels, se_ratio=0.25):
+        super(SqueezeExcitation, self).__init__()
+        squeezed_channels = max(1, int(in_channels * se_ratio))
+        self.fc1 = nn.Conv2d(in_channels, squeezed_channels, kernel_size=1)
+        self.fc2 = nn.Conv2d(squeezed_channels, in_channels, kernel_size=1)
+
+    def forward(self, x):
+        # Global Average Pooling
+        se = F.adaptive_avg_pool2d(x, 1)
+        se = F.relu(self.fc1(se))
+        se = torch.sigmoid(self.fc2(se))
+        return x * se
+
+# Inverted Residual + SE + Skip (for EfficientNet)
+class MBConv(nn.Module):
+    def __init__(self, in_ch, out_ch, expand_ratio, stride, kernel_size=3, se_ratio=0.25):
+        super(MBConv, self).__init__()
+        mid_ch = in_ch * expand_ratio
+        self.use_residual = (in_ch == out_ch and stride == 1)
+
+        # 1) Expand phase (pointwise conv)
+        self.expand_conv = nn.Conv2d(in_ch, mid_ch, kernel_size=1, bias=False)
+        self.bn0 = nn.BatchNorm2d(mid_ch)
+
+        # 2) Depthwise conv
+        self.dw_conv = nn.Conv2d(mid_ch, mid_ch, kernel_size=kernel_size,
+                                 stride=stride, padding=kernel_size//2,
+                                 groups=mid_ch, bias=False)
+        self.bn1 = nn.BatchNorm2d(mid_ch)
+
+        # 3) Squeeze-and-Excitation
+        self.se = SqueezeExcitation(mid_ch, se_ratio=se_ratio)
+
+        # 4) Project phase (pointwise conv)
+        self.project_conv = nn.Conv2d(mid_ch, out_ch, kernel_size=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_ch)
+
+    def forward(self, x):
+        out = F.relu6(self.bn0(self.expand_conv(x)))
+        out = F.relu6(self.bn1(self.dw_conv(out)))
+        out = self.se(out)
+        out = self.bn2(self.project_conv(out))
+        if self.use_residual:
+            return x + out
+        else:
+            return out
+
+# EfficientNet Architecture
+class EfficientNet(nn.Module):
+    def __init__(self, stage_params: tuple[int, int, int, int, int],
+                 num_classes=2):
+        super(EfficientNet, self).__init__()
+        # Stem: extend channel to 3, and downsample(stride=2)
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True)
+        )
+
+        blocks = []
+        for in_ch, out_ch, exp, n, s in stage_params:
+            # stride = s for first block
+            blocks.append(MBConv(in_ch, out_ch, expand_ratio=exp, stride=s))
+            # stride = 1 for other block
+            for _ in range(1, n):
+                blocks.append(MBConv(out_ch, out_ch, expand_ratio=exp, stride=1))
+        self.blocks = nn.Sequential(*blocks)
+
+        # Head: extend out_channel to 1280, pooling and fc
+        self.head = nn.Sequential(
+            nn.Conv2d(320, 1280, kernel_size=1, bias=False),
+            nn.BatchNorm2d(1280),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d(1),
+        )
+        self.classifier = nn.Linear(1280, num_classes)
+
+    def forward(self, x):
+        x = self.stem(x)
+        x = self.blocks(x)
+        x = self.head(x)
+        x = torch.flatten(x, 1)
+        return self.classifier(x)
+
+# EfficientNet instance
+def effnet(model_size: Literal["BO", "B1", "B2", "B3", "B4", "B5", "B6"],
+           num_classes=2):
+    # MBConv Stage, (in_ch, out_ch, expand_ratio, repeat, stride)
+    EFFNET_CONFIGS = {
+        "B0": {
+            "stage_params": [
+                ( 32,  16, 1, 1, 1),
+                ( 16,  24, 6, 2, 2),
+                ( 24,  40, 6, 2, 2),
+                ( 40,  80, 6, 3, 2),
+                ( 80, 112, 6, 3, 1),
+                (112, 192, 6, 4, 2),
+                (192, 320, 6, 1, 1),
+            ]
+        }
+    }
+    if model_size not in EFFNET_CONFIGS:
+        raise RuntimeError(f"EfficientNet-{model_size} not implemented.")
+    config = EFFNET_CONFIGS[model_size]
+
+    return EfficientNet(stage_params=config["stage_params"],
+                        num_classes=num_classes)
 
 # Basic Patch Embedding and Transformer Encoder Block
 class PatchEmbedding(nn.Module):
@@ -200,29 +303,36 @@ class VisionTransformer(nn.Module):
 
 # ViT instance
 def vit(model_size: Literal["tiny", "small", "base", "large"], num_classes=2):
-    if model_size == "tiny":
-        embed_dim = 192
-        num_heads = 3
-        depth = 12
-    elif model_size == "small":
-        embed_dim = 384
-        num_heads = 6
-        depth = 12
-    elif model_size == "base":
-        embed_dim = 768
-        num_heads = 12
-        depth = 12
-    elif model_size == "large":
-        embed_dim = 1024
-        num_heads = 16
-        depth = 24
-    else:
+    VIT_CONFIGS = {
+        "tiny": {
+            "embed_dim": 192,
+            "num_heads": 3,
+            "depth": 12,
+        },
+        "small": {
+            "embed_dim": 384,
+            "num_heads": 6,
+            "depth": 12,
+        },
+        "base": {
+            "embed_dim": 768,
+            "num_heads": 12,
+            "depth": 12,
+        },
+        "large": {
+            "embed_dim": 1024,
+            "num_heads": 16,
+            "depth": 24,
+        },
+    }
+    if model_size not in VIT_CONFIGS:
         raise RuntimeError(f"ViT-{model_size} not implemented.")
+    config = VIT_CONFIGS[model_size]
 
     return VisionTransformer(
         img_size=224, patch_size=16, in_chans=3,
-        num_classes=num_classes,
-        embed_dim=embed_dim, depth=depth, num_heads=num_heads,
+        num_classes=num_classes, embed_dim=config["embed_dim"],
+        depth=config["depth"], num_heads=config["num_heads"],
         mlp_ratio=4.0, dropout=0.1
     )
 
