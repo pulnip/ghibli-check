@@ -84,8 +84,8 @@ class GhibliTorchDataset(Dataset):
 Episode = tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]
 
 class ProtoEpisodeDataset(Dataset):
-    def __init__(self, image_pair_paths, transform,
-                 num_episodes=2000, K=3):
+    def __init__(self, image_pair_paths, num_episodes=2000,
+                 K=3, train=True, pbar: tqdm = None):
         super(ProtoEpisodeDataset, self).__init__()
         self.episodes: list[Episode] = []
 
@@ -95,10 +95,16 @@ class ProtoEpisodeDataset(Dataset):
             # Ensure tuple for set (hashable)
             support_indexes.add(tuple(random.sample(pair_indexes, K)))
 
+        is_shared_pbar = pbar is not None
+        pbar = pbar if is_shared_pbar \
+                    else tqdm(total=num_episodes,
+                              desc=f"Augmenting {"Train" if train else "Validate"} episodes")
+
+        sp_trans = train_transform if train else val_transform
         for support_index in support_indexes:
-            support_ai   = [transform(Image.open(image_pair_paths[i]["ai_image"]).convert("RGB"))
+            support_ai   = [sp_trans(Image.open(image_pair_paths[i]["ai_image"]).convert("RGB"))
                             for i in support_index]
-            support_real = [transform(Image.open(image_pair_paths[i]["real_image"]).convert("RGB"))
+            support_real = [sp_trans(Image.open(image_pair_paths[i]["real_image"]).convert("RGB"))
                             for i in support_index]
             support_x = torch.stack(support_ai+support_real)
             support_y = torch.tensor([0]*K + [1]*K)
@@ -111,6 +117,9 @@ class ProtoEpisodeDataset(Dataset):
             query = val_transform(Image.open(image_pair_paths[query_index][key]).convert("RGB")).unsqueeze(0)
 
             self.episodes.append((support_x, support_y, query, label))
+            pbar.update(1)
+        if not is_shared_pbar:
+            pbar.close()
 
     def __len__(self):
         return len(self.episodes)
@@ -134,10 +143,11 @@ def get_dataloaders(num_data=4000, split=0.8,
                                   train=True, pbar=pbar)
     val_ds   = GhibliTorchDataset(ds=ds, num_data=val_size,
                                   train=True, pbar=pbar)
+    pbar.close()
 
     train_loader = DataLoader(train_ds, batch_size=batch_size,
-        shuffle=True, num_workers=num_workers)
-    val_loader = DataLoader(val_ds, batch_size=batch_size,
+        shuffle=True,  num_workers=num_workers)
+    val_loader   = DataLoader(  val_ds, batch_size=batch_size,
         shuffle=False, num_workers=num_workers)
     return train_loader, val_loader
 
@@ -145,18 +155,24 @@ def meta_dataloaders(filename: str, num_episodes=2000,
                      batch_size=32, split=0.8, num_workers=4):
     with open(filename, "r") as f:
         lines = f.readlines()
-        image_pairs = [json.loads(line) for line in lines]
+        image_pair_paths = [json.loads(line) for line in lines]
 
-    full_ds = ProtoEpisodeDataset(image_pairs, train_transform, num_episodes)
-    train_size = int(split * len(full_ds))
-    test_size = len(full_ds) - train_size
-    train_ds, test_ds = random_split(full_ds, [train_size, test_size])
+    pbar = tqdm(total=num_episodes, desc="Augmenting episodes")
+    train_size = int(split*num_episodes)
+    val_size = num_episodes - train_size
+    train_ds = ProtoEpisodeDataset(image_pair_paths=image_pair_paths,
+                                   num_episodes=train_size, train=True,
+                                   pbar=pbar)
+    val_ds   = ProtoEpisodeDataset(image_pair_paths=image_pair_paths,
+                                   num_episodes=val_size,   train=False,
+                                   pbar=pbar)
+    pbar.close()
 
     train_loader = DataLoader(train_ds, batch_size=batch_size,
-        shuffle=True, num_workers=num_workers)
-    test_loader = DataLoader(test_ds, batch_size=batch_size,
+        shuffle=True,  num_workers=num_workers)
+    val_loader   = DataLoader(  val_ds, batch_size=batch_size,
         shuffle=False, num_workers=num_workers)
-    return train_loader, test_loader
+    return train_loader, val_loader
 
 # Visualize random batches from a loader
 def visualize_random_batches(loader, num_batches=5, samples_per_batch=6):

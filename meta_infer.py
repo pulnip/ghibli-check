@@ -17,17 +17,19 @@ if __name__ == "__main__":
     parser.add_argument("--task", nargs='+', type=str, help="태스크 폴더")
     args = parser.parse_args()
 
-    model_fname: str = f"{args.model}.pth"
+    MODEL_NAME: str = args.model
+    match = re.search(r"resnet(\d+)", MODEL_NAME)
+    MODEL_SIZE = int(match.group(1)) if match else 6
+    match = re.search(r"_(\d+)", MODEL_NAME)
+    EMB_SIZE = int(match.group(1)) if match else 64
+
     task_paths: list[str] = args.task
 
-    match = re.search(r"resnet(\d+)", args.model)
-    model_size = int(match.group(1)) if match else 6
-    embedding = resnet(model_size, num_classes=64)
-
+    embedding = resnet(MODEL_SIZE, num_classes=EMB_SIZE)
     # Load model
     model = ProtoNet(num_ways=2, num_shots=3,
                      embedding_net=embedding).to(DEVICE)
-    model.load_state_dict(torch.load(model_fname, map_location=DEVICE))
+    model.load_state_dict(torch.load(f"{MODEL_NAME}.pth", map_location=DEVICE))
     model.eval()
 
     result = proto_infer(model, task_paths=task_paths)
